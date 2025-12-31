@@ -1,60 +1,80 @@
 name: Build Plugin
 on:
   push:
-    branches: [ "**" ]  # 這代表任何分支推送都會觸發
-  workflow_dispatch:      # 加入這一行，可以讓您手動按按鈕執行
+    branches: [ "**" ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
-        DALAMUD_HOME: /tmp/dalamud
+      DALAMUD_HOME: /tmp/dalamud
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-            submodules: true
-            
+          submodules: recursive # 遞迴抓取所有子模組，解決 ImGui 缺失問題
+
       - name: Get Tag Name
-        run: echo "tag=$(echo ${{ github.ref }} | sed 's/refs\/tags\/v//')" >> $GITHUB_ENV            
+        run: |
+          # 獲取 Tag 名稱，如果不是從 Tag 觸發，則預設為 1.5.3.3
+          RAW_TAG=$(echo ${{ github.ref }} | sed 's/refs\/tags\/v//' | sed 's/refs\/heads\///')
+          if [[ "$RAW_TAG" == *"trigger-build"* ]] || [[ "$RAW_TAG" == "main" ]]; then
+            echo "tag=1.5.3.3" >> $GITHUB_ENV
+          else
+            echo "tag=$RAW_TAG" >> $GITHUB_ENV
+          fi
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
-          
+
       - name: Download config.yaml
         run: curl -L https://raw.githubusercontent.com/goatcorp/dalamud-declarative/main/config.yaml -o config.yaml
 
       - name: Install yq
         run: |
-            wget https://github.com/mikefarah/yq/releases/download/v4.34.1/yq_linux_amd64 -O /usr/local/bin/yq
-            chmod +x /usr/local/bin/yq
-      
+          sudo wget https://github.com/mikefarah/yq/releases/download/v4.34.1/yq_linux_amd64 -O /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+
       - name: Extract Latest Track Name
         id: latest_track
         run: |
-            latest_entry=$(yq eval '.tracks | to_entries | sort_by(.value.applicableGameVersion, .key | match("release.*") | . == "" | not) | .[-1]' config.yaml)
-            track_name=$(echo "$latest_entry" | yq eval '.key' -)
-            echo "result=$track_name" >> $GITHUB_OUTPUT
-      
+          latest_entry=$(yq eval '.tracks | to_entries | sort_by(.value.applicableGameVersion, .key | match("release.*") | . == "" | not) | .[-1]' config.yaml)
+          track_name=$(echo "$latest_entry" | yq eval '.key' -)
+          echo "result=$track_name" >> $GITHUB_OUTPUT
+
       - name: Download Dalamud Latest
         run: |
-            if [ "${{ steps.latest_track.outputs.result }}" == "release" ]; then
-                wget https://goatcorp.github.io/dalamud-distrib/latest.zip -O ${{ env.DALAMUD_HOME }}.zip
-            else
-                wget https://goatcorp.github.io/dalamud-distrib/${{ steps.latest_track.outputs.result }}/latest.zip -O ${{ env.DALAMUD_HOME }}.zip
-            fi
-            unzip ${{ env.DALAMUD_HOME }}.zip -d ${{ env.DALAMUD_HOME }}
-      
+          mkdir -p ${{ env.DALAMUD_HOME }}
+          if [ "${{ steps.latest_track.outputs.result }}" == "release" ]; then
+              wget https://goatcorp.github.io/dalamud-distrib/latest.zip -O ${{ env.DALAMUD_HOME }}.zip
+          else
+              wget https://goatcorp.github.io/dalamud-distrib/${{ steps.latest_track.outputs.result }}/latest.zip -O ${{ env.DALAMUD_HOME }}.zip
+          fi
+          unzip ${{ env.DALAMUD_HOME }}.zip -d ${{ env.DALAMUD_HOME }}
+
       - name: Restore
         run: dotnet restore
-          
+
       - name: Build
         run: |
-          dotnet build --no-restore --configuration Release --nologo -p:AssemblyVersion=${{ env.tag }}
-            
+          # 這裡強制指定版本號，避免無效的字串導致編譯失敗
+          dotnet build --no-restore --configuration Release --nologo -p:AssemblyVersion=${{ env.tag }} -p:FileVersion=${{ env.tag }} -p:InformationalVersion=${{ env.tag }}
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HoardFarm-v${{ env.tag }}
+          path: 'HoardFarm/bin/x64/Release/HoardFarm/'
+          if-no-files-found: warn
+
+      # 下面這段原本是發佈用的，因為您沒有 PUBLISHER_KEY，通常會失敗。
+      # 但沒關係，上面的 Upload Artifact 會讓您拿到檔案。
       - name: Publish Version
+        if: false # 暫時停用此步驟以免報錯影響心情
         uses: PunishXIV/dynamis-action@v1
         id: dynamis
         with:
