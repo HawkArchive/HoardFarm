@@ -3,7 +3,7 @@ on:
   push:
     tags:
         - 'v[0-9]+.[0-9]+.[0-9]+.[0-9]+'
-
+  workflow_dispatch:
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -63,6 +63,6 @@ jobs:
             version_number: ${{ env.tag }}
             path: 'HoardFarm/bin/x64/Release/HoardFarm/latest.zip'
             type: 'latest'
-            dalamud_version: '14'
+            dalamud_version: '12'
         env:
             PUBLISHER_KEY: ${{ secrets.PUBLISHER_KEY }}
